@@ -10,16 +10,16 @@ let cachedData = {
   spots: "11",
   xray: "B3.8",
   aindex: "4",
-  kindex: "1",
+  kindex: "0.33",
   wind: "393",
-  protons: "0.20",
+  protons: "0.21",
   noise: "0.5",
   updated: null
 };
 
 async function updateData() {
   try {
-    // 1. HamQSL für Basiswerte (Solar Flux, Sunspots, X-Ray, K-Index, A-Index)
+    // 1. HamQSL für Basiswerte (Solar Flux, Sunspots, X-Ray)
     const resHam = await fetch('https://www.hamqsl.com/solarxml.php');
     if (resHam.ok) {
       const xml = await resHam.text();
@@ -30,11 +30,26 @@ async function updateData() {
       if (getTag('solarflux')) cachedData.sfi = getTag('solarflux');
       if (getTag('sunspots')) cachedData.spots = getTag('sunspots');
       if (getTag('xray')) cachedData.xray = getTag('xray');
-      if (getTag('kindex')) cachedData.kindex = getTag('kindex');
-      if (getTag('aindex')) cachedData.aindex = getTag('aindex');
     }
 
-    // 2. NOAA Solar Wind (Geschwindigkeit)
+    // 2. NOAA Planetary K-Index & A-Index (liefert exakte Dezimalwerte wie 0.33)
+    const resKp = await fetch('https://services.swpc.noaa.gov/products/noaa-planetary-k-index.json');
+    if (resKp.ok) {
+      const kpData = await resKp.json();
+      if (Array.isArray(kpData) && kpData.length > 1) {
+        for (let i = kpData.length - 1; i > 0; i--) {
+          if (kpData[i][1] !== null && kpData[i][1] !== undefined) {
+            cachedData.kindex = parseFloat(kpData[i][1]).toFixed(2); // Exakter Dezimalwert (z.B. "0.33")
+            if (kpData[i][2] !== null && kpData[i][2] !== undefined) {
+              cachedData.aindex = Math.round(parseFloat(kpData[i][2])).toString();
+            }
+            break;
+          }
+        }
+      }
+    }
+
+    // 3. NOAA Solar Wind (Geschwindigkeit)
     const resWind = await fetch('https://services.swpc.noaa.gov/products/solar-wind/plasma-6-hour.json');
     if (resWind.ok) {
       const plasma = await resWind.json();
@@ -48,7 +63,7 @@ async function updateData() {
       }
     }
 
-    // 3. NOAA Protonenfluss
+    // 4. NOAA Protonenfluss
     const resProtons = await fetch('https://services.swpc.noaa.gov/json/goes/primary/integral-protons-6-hour.json');
     if (resProtons.ok) {
       const protons = await resProtons.json();
