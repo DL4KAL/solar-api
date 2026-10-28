@@ -15,37 +15,33 @@ let cachedData = {
 
 async function updateData() {
   try {
-    const resSummary = await fetch('https://services.swpc.noaa.gov/products/summary/solar-flux.json').then(r => r.json());
-    const resKp = await fetch('https://services.swpc.noaa.gov/products/noaa-planetary-k-index.json').then(r => r.json());
-    const resXray = await fetch('https://services.swpc.noaa.gov/json/goes/primary/xrays-6-hour.json').then(r => r.json());
+    // Wir nutzen den extrem stabilen HamQSL-XML-Feed für Node, 
+    // der alle Werte gebündelt liefert und nie enttäuscht.
+    const response = await fetch('https://www.hamqsl.com/solarxml.php');
+    if (!response.ok) throw new Error('HamQSL nicht erreichbar');
+    const xmlText = await response.text();
 
-    cachedData.sfi = resSummary.flux || "--";
-    
-    if (resKp && resKp.length > 1) {
-      cachedData.kindex = resKp[resKp.length - 1][1] || "--";
-    }
+    // Einfaches Extrahieren der XML-Werte per RegEx (ganz ohne schwere Parser)
+    const getTag = (tag) => {
+      const match = xmlText.match(new RegExp(`<${tag}>(.*?)<\/${tag}>`));
+      return match ? match[1] : "--";
+    };
 
-    const latestX = resXray.filter(item => item.energy === '0.1-0.8nm').pop();
-    if (latestX && latestX.flux) {
-      let f = latestX.flux;
-      let c = "A", v = f;
-      if (f >= 1e-4) { c = "X"; v = (f / 1e-4).toFixed(1); }
-      else if (f >= 1e-5) { c = "M"; v = (f / 1e-5).toFixed(1); }
-      else if (f >= 1e-6) { c = "C"; v = (f / 1e-6).toFixed(1); }
-      else if (f >= 1e-7) { c = "B"; v = (f / 1e-7).toFixed(1); }
-      else { v = (f / 1e-8).toFixed(1); }
-      cachedData.xray = c + v;
-    }
-
+    cachedData.sfi = getTag('solarflux');
+    cachedData.spots = getTag('sunspots');
+    cachedData.xray = getTag('xray');
+    cachedData.kindex = getTag('kindex');
     cachedData.updated = new Date().toISOString();
-    console.log("Solardaten aktualisiert.");
+
+    console.log("Solardaten erfolgreich aktualisiert:", cachedData);
   } catch (err) {
-    console.error("Fehler beim Aktualisieren:", err);
+    console.error("Fehler beim Aktualisieren:", err.message);
   }
 }
 
+// Beim Start und alle 10 Minuten aktualisieren
 updateData();
-setInterval(updateData, 15 * 60 * 1000);
+setInterval(updateData, 10 * 60 * 1000);
 
 app.get('/solar-data', (req, res) => {
   res.json(cachedData);
