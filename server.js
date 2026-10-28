@@ -9,17 +9,16 @@ let cachedData = {
   sfi: "89",
   spots: "11",
   xray: "B3.8",
-  aindex: "4",
   kindex: "1",
   wind: "393",
-  protons: "0.20",
+  protons: "0.22",
   noise: "0.5",
   updated: null
 };
 
 async function updateData() {
   try {
-    // 1. HamQSL für Basiswerte (Solar Flux, Sunspots, X-Ray, K-Index, A-Index)
+    // 1. HamQSL für Solar Flux, Sunspots, X-Ray, K-Index
     const resHam = await fetch('https://www.hamqsl.com/solarxml.php');
     if (resHam.ok) {
       const xml = await resHam.text();
@@ -31,14 +30,14 @@ async function updateData() {
       if (getTag('sunspots')) cachedData.spots = getTag('sunspots');
       if (getTag('xray')) cachedData.xray = getTag('xray');
       if (getTag('kindex')) cachedData.kindex = getTag('kindex');
-      if (getTag('aindex')) cachedData.aindex = getTag('aindex');
     }
 
-    // 2. NOAA Solar Wind (Geschwindigkeit)
+    // 2. NOAA Solar Wind (direkter JSON-Abruf für die Geschwindigkeit)
     const resWind = await fetch('https://services.swpc.noaa.gov/products/solar-wind/plasma-6-hour.json');
     if (resWind.ok) {
       const plasma = await resWind.json();
       if (Array.isArray(plasma) && plasma.length > 1) {
+        // Wir suchen den letzten gültigen Geschwindigkeitswert (Spalte 2)
         for (let i = plasma.length - 1; i > 0; i--) {
           if (plasma[i][2] !== null && plasma[i][2] !== undefined) {
             cachedData.wind = Math.round(parseFloat(plasma[i][2])).toString();
@@ -48,11 +47,12 @@ async function updateData() {
       }
     }
 
-    // 3. NOAA Protonenfluss
+    // 3. NOAA Protonenfluss (GOES Protonen 5-Minuten-Feed)
     const resProtons = await fetch('https://services.swpc.noaa.gov/json/goes/primary/integral-protons-6-hour.json');
     if (resProtons.ok) {
       const protons = await resProtons.json();
       if (Array.isArray(protons) && protons.length > 0) {
+        // Den neuesten Eintrag mit einer gültigen Flux-Zahl finden
         const validProton = protons.reverse().find(p => p.flux !== null && p.flux !== undefined);
         if (validProton) {
           cachedData.protons = Number(validProton.flux).toFixed(2);
@@ -67,6 +67,7 @@ async function updateData() {
   }
 }
 
+// Beim Start und alle 10 Minuten aktualisieren
 updateData();
 setInterval(updateData, 10 * 60 * 1000);
 
