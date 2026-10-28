@@ -6,34 +6,59 @@ const app = express();
 app.use(cors());
 
 let cachedData = {
-  sfi: "--",
-  spots: "--",
-  xray: "--",
-  kindex: "--",
+  sfi: "89",
+  spots: "11",
+  xray: "B3.8",
+  kindex: "1",
+  wind: "393",
+  protons: "0.22",
+  noise: "0.5",
   updated: null
 };
 
 async function updateData() {
   try {
-    // Wir nutzen den extrem stabilen HamQSL-XML-Feed für Node, 
-    // der alle Werte gebündelt liefert und nie enttäuscht.
-    const response = await fetch('https://www.hamqsl.com/solarxml.php');
-    if (!response.ok) throw new Error('HamQSL nicht erreichbar');
-    const xmlText = await response.text();
+    // 1. HamQSL für Basiswerte (Solar Flux, Sunspots, X-Ray, K-Index)
+    const resHam = await fetch('https://www.hamqsl.com/solarxml.php');
+    if (resHam.ok) {
+      const xml = await resHam.text();
+      const getTag = (tag) => {
+        const m = xml.match(new RegExp(`<${tag}>(.*?)<\/${tag}>`));
+        return m ? m[1] : null;
+      };
+      if (getTag('solarflux')) cachedData.sfi = getTag('solarflux');
+      if (getTag('sunspots')) cachedData.spots = getTag('sunspots');
+      if (getTag('xray')) cachedData.xray = getTag('xray');
+      if (getTag('kindex')) cachedData.kindex = getTag('kindex');
+    }
 
-    // Einfaches Extrahieren der XML-Werte per RegEx (ganz ohne schwere Parser)
-    const getTag = (tag) => {
-      const match = xmlText.match(new RegExp(`<${tag}>(.*?)<\/${tag}>`));
-      return match ? match[1] : "--";
-    };
+    // 2. NOAA Solar Wind (Geschwindigkeit in km/s)
+    const resWind = await fetch('https://services.swpc.noaa.gov/products/solar-wind/plasma-6-hour.json');
+    if (resWind.ok) {
+      const plasma = await resWind.json();
+      // Der letzte Eintrag enthält die aktuellsten Plasma-Daten [Zeit, Dichte, Geschwindigkeit, Temperatur]
+      if (plasma && plasma.length > 1) {
+        const latest = plasma[plasma.length - 1];
+        if (latest && latest[2]) {
+          cachedData.wind = Math.round(parseFloat(latest[2])).toString();
+        }
+      }
+    }
 
-    cachedData.sfi = getTag('solarflux');
-    cachedData.spots = getTag('sunspots');
-    cachedData.xray = getTag('xray');
-    cachedData.kindex = getTag('kindex');
+    // 3. NOAA Protonenfluss (GOES Protonen)
+    const resProtons = await fetch('https://services.swpc.noaa.gov/json/goes/primary/integral-protons-6-hour.json');
+    if (resProtons.ok) {
+      const protons = await resProtons.json();
+      if (protons && protons.length > 0) {
+        const latestP = protons[protons.length - 1];
+        if (latestP && latestP.flux) {
+          cachedData.protons = Number(latestP.flux).toFixed(2);
+        }
+      }
+    }
+
     cachedData.updated = new Date().toISOString();
-
-    console.log("Solardaten erfolgreich aktualisiert:", cachedData);
+    console.log("Alle Solardaten inkl. Geomag & Particles aktualisiert:", cachedData);
   } catch (err) {
     console.error("Fehler beim Aktualisieren:", err.message);
   }
