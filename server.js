@@ -1,5 +1,4 @@
 const express = require('express');
-const fetch = require('node-fetch');
 const cors = require('cors');
 const app = express();
 
@@ -17,9 +16,14 @@ let cachedData = {
   updated: null
 };
 
+let lastFetchTime = 0;
+const CACHE_DURATION = 10 * 60 * 1000; // 10 Minuten Zwischenspeicher
+
 async function updateData() {
+  console.log("Hole exakte Rohdaten von HamQSL und NOAA...");
+
+  // 1. HamQSL für Basiswerte (SFI, Sunspots, X-Ray)
   try {
-    // 1. HamQSL für Basiswerte (Solar Flux, Sunspots, X-Ray)
     const resHam = await fetch('https://www.hamqsl.com/solarxml.php');
     if (resHam.ok) {
       const xml = await resHam.text();
@@ -31,15 +35,19 @@ async function updateData() {
       if (getTag('sunspots')) cachedData.spots = getTag('sunspots');
       if (getTag('xray')) cachedData.xray = getTag('xray');
     }
+  } catch (err) {
+    console.error("Fehler bei HamQSL:", err.message);
+  }
 
-    // 2. NOAA Planetary K-Index & A-Index (liefert exakte Dezimalwerte wie 0.33)
+  // 2. NOAA Planetary K-Index & A-Index (Offizieller NOAA-Rohdaten-Feed)
+  try {
     const resKp = await fetch('https://services.swpc.noaa.gov/products/noaa-planetary-k-index.json');
     if (resKp.ok) {
       const kpData = await resKp.json();
       if (Array.isArray(kpData) && kpData.length > 1) {
         for (let i = kpData.length - 1; i > 0; i--) {
           if (kpData[i][1] !== null && kpData[i][1] !== undefined) {
-            cachedData.kindex = parseFloat(kpData[i][1]).toFixed(2); // Exakter Dezimalwert (z.B. "0.33")
+            cachedData.kindex = parseFloat(kpData[i][1]).toFixed(2);
             if (kpData[i][2] !== null && kpData[i][2] !== undefined) {
               cachedData.aindex = Math.round(parseFloat(kpData[i][2])).toString();
             }
@@ -48,44 +56,57 @@ async function updateData() {
         }
       }
     }
+  } catch (err) {
+    console.error("Fehler bei NOAA K-Index:", err.message);
+  }
 
-    // 3. NOAA Solar Wind (Geschwindigkeit)
-    const resWind = await fetch('https://services.swpc.noaa.gov/products/solar-wind/plasma-6-hour.json');
+  // 3. NOAA Solar Wind (1-Tages-Rohdaten-Feed für maximale Aktualität)
+  try {
+    const resWind = await fetch('https://services.swpc.noaa.gov/products/solar-wind/plasma-1-day.json');
     if (resWind.ok) {
       const plasma = await resWind.json();
       if (Array.isArray(plasma) && plasma.length > 1) {
         for (let i = plasma.length - 1; i > 0; i--) {
           if (plasma[i][2] !== null && plasma[i][2] !== undefined) {
-            cachedData.wind = Math.round(parseFloat(plasma[i][2])).toString();
-            break;
+            const speed = parseFloat(plasma[i][2]);
+            if (!isNaN(speed) && speed > 0) {
+              cachedData.wind = Math.round(speed).toString();
+              break;
+            }
           }
         }
       }
     }
+  } catch (err) {
+    console.error("Fehler bei NOAA Wind:", err.message);
+  }
 
-    // 4. NOAA Protonenfluss
+  // 4. NOAA Protonenfluss
+  try {
     const resProtons = await fetch('https://services.swpc.noaa.gov/json/goes/primary/integral-protons-6-hour.json');
     if (resProtons.ok) {
       const protons = await resProtons.json();
       if (Array.isArray(protons) && protons.length > 0) {
-        const validProton = protons.reverse().find(p => p.flux !== null && p.flux !== undefined);
+        const validProtons = [...protons].reverse();
+        const validProton = validProtons.find(p => p.flux !== null && p.flux !== undefined);
         if (validProton) {
           cachedData.protons = Number(validProton.flux).toFixed(2);
         }
       }
     }
-
-    cachedData.updated = new Date().toISOString();
-    console.log("Daten erfolgreich aktualisiert:", cachedData);
   } catch (err) {
-    console.error("Fehler beim Aktualisieren:", err.message);
+    console.error("Fehler bei NOAA Protonen:", err.message);
   }
+
+  cachedData.updated = new Date().toISOString();
+  lastFetchTime = Date.now();
+  console.log("Rohdaten erfolgreich aktualisiert:", cachedData);
 }
 
-updateData();
-setInterval(updateData, 10 * 60 * 1000);
-
-app.get('/solar-data', (req, res) => {
+app.get('/solar-data', async (req, res) => {
+  if (Date.now() - lastFetchTime > CACHE_DURATION || !cachedData.updated) {
+    await updateData();
+  }
   res.json(cachedData);
 });
 
