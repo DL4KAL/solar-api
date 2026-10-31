@@ -17,14 +17,15 @@ let cachedData = {
 };
 
 let lastFetchTime = 0;
-const CACHE_DURATION = 10 * 60 * 1000; // 10 Minuten Zwischenspeicher
+const CACHE_DURATION = 2 * 60 * 1000; // Auf 2 Minuten verkürzt für schnellere Aktualisierung
 
 async function updateData() {
   console.log("Hole exakte Rohdaten von HamQSL und NOAA...");
+  const cacheBuster = `?_t=${Date.now()}`;
 
   // 1. HamQSL für Basiswerte (SFI, Sunspots, X-Ray)
   try {
-    const resHam = await fetch('https://www.hamqsl.com/solarxml.php');
+    const resHam = await fetch(`https://www.hamqsl.com/solarxml.php${cacheBuster}`);
     if (resHam.ok) {
       const xml = await resHam.text();
       const getTag = (tag) => {
@@ -39,9 +40,9 @@ async function updateData() {
     console.error("Fehler bei HamQSL:", err.message);
   }
 
-  // 2. NOAA Planetary K-Index & A-Index (Offizieller NOAA-Rohdaten-Feed)
+  // 2. NOAA Planetary K-Index & A-Index
   try {
-    const resKp = await fetch('https://services.swpc.noaa.gov/products/noaa-planetary-k-index.json');
+    const resKp = await fetch(`https://services.swpc.noaa.gov/products/noaa-planetary-k-index.json${cacheBuster}`);
     if (resKp.ok) {
       const kpData = await resKp.json();
       if (Array.isArray(kpData) && kpData.length > 1) {
@@ -60,9 +61,9 @@ async function updateData() {
     console.error("Fehler bei NOAA K-Index:", err.message);
   }
 
-  // 3. NOAA Solar Wind (1-Tages-Rohdaten-Feed für maximale Aktualität)
+  // 3. NOAA Solar Wind
   try {
-    const resWind = await fetch('https://services.swpc.noaa.gov/products/solar-wind/plasma-1-day.json');
+    const resWind = await fetch(`https://services.swpc.noaa.gov/products/solar-wind/plasma-1-day.json${cacheBuster}`);
     if (resWind.ok) {
       const plasma = await resWind.json();
       if (Array.isArray(plasma) && plasma.length > 1) {
@@ -83,7 +84,7 @@ async function updateData() {
 
   // 4. NOAA Protonenfluss
   try {
-    const resProtons = await fetch('https://services.swpc.noaa.gov/json/goes/primary/integral-protons-6-hour.json');
+    const resProtons = await fetch(`https://services.swpc.noaa.gov/json/goes/primary/integral-protons-6-hour.json${cacheBuster}`);
     if (resProtons.ok) {
       const protons = await resProtons.json();
       if (Array.isArray(protons) && protons.length > 0) {
@@ -104,7 +105,10 @@ async function updateData() {
 }
 
 app.get('/solar-data', async (req, res) => {
-  if (Date.now() - lastFetchTime > CACHE_DURATION || !cachedData.updated) {
+  // Wenn ?refresh=true in der URL steht, wird ein Update erzwungen
+  const forceRefresh = req.query.refresh === 'true';
+
+  if (forceRefresh || Date.now() - lastFetchTime > CACHE_DURATION || !cachedData.updated) {
     await updateData();
   }
   res.json(cachedData);
