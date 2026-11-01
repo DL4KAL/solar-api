@@ -5,22 +5,23 @@ const app = express();
 app.use(cors());
 
 let cachedData = {
-  sfi: "90",
-  spots: "24",
-  xray: "B2.4",
+  sfi: "92",
+  spots: "31",
+  xray: "B2.5",
   aindex: "4",
   kindex: "0.33",
   wind: "393",
-  protons: "0.22",
+  protons: "0.18",
   noise: "0.5",
+  bz: "0.0", // Neuer Wert für das interplanetare Magnetfeld (Bz)
   updated: null
 };
 
 let lastFetchTime = 0;
-const CACHE_DURATION = 2 * 60 * 1000; // 2 Minuten Cache für schnellere Aktualisierung
+const CACHE_DURATION = 2 * 60 * 1000; // 2 Minuten Cache
 
 async function updateData() {
-  console.log("Hole exakte Rohdaten von HamQSL und NOAA...");
+  console.log("Hole minütliche Echtzeit-Rohdaten von HamQSL und NOAA...");
   const cacheBuster = `?_t=${Date.now()}`;
 
   // 1. HamQSL für Basiswerte (SFI, Sunspots, X-Ray)
@@ -40,35 +41,29 @@ async function updateData() {
     console.error("Fehler bei HamQSL:", err.message);
   }
 
-  // 2. NOAA Planetary K-Index & A-Index
+  // 2. NOAA Boulder 1-Minuten K-Index (Reagiert deutlich schneller als der 3-Stunden-Kp)
   try {
-    const resKp = await fetch(`https://services.swpc.noaa.gov/products/noaa-planetary-k-index.json${cacheBuster}`);
+    const resKp = await fetch(`https://services.swpc.noaa.gov/json/boulder_k_index_1m.json${cacheBuster}`);
     if (resKp.ok) {
       const kpData = await resKp.json();
-      if (Array.isArray(kpData) && kpData.length > 1) {
-        for (let i = kpData.length - 1; i > 0; i--) {
-          if (kpData[i][1] !== null && kpData[i][1] !== undefined) {
-            cachedData.kindex = parseFloat(kpData[i][1]).toFixed(2);
-            if (kpData[i][2] !== null && kpData[i][2] !== undefined) {
-              cachedData.aindex = Math.round(parseFloat(kpData[i][2])).toString();
-            }
-            break;
-          }
+      if (Array.isArray(kpData) && kpData.length > 0) {
+        const validKp = [...kpData].reverse().find(k => k.k_index !== null && k.k_index !== undefined);
+        if (validKp) {
+          cachedData.kindex = parseFloat(validKp.k_index).toFixed(2);
         }
       }
     }
   } catch (err) {
-    console.error("Fehler bei NOAA K-Index:", err.message);
+    console.error("Fehler bei NOAA Boulder K-Index:", err.message);
   }
 
-  // 3. NOAA Real-Time Solar Wind (Minutengenaue RTSW-Rohdaten für Live-Änderungen)
+  // 3. NOAA Real-Time Solar Wind (Minutengenaue RTSW-Rohdaten für Live-Windgeschwindigkeit)
   try {
     const resWind = await fetch(`https://services.swpc.noaa.gov/json/rtsw/rtsw_wind_1m.json${cacheBuster}`);
     if (resWind.ok) {
       const plasma = await resWind.json();
       if (Array.isArray(plasma) && plasma.length > 0) {
-        const validPlasma = [...plasma].reverse();
-        const currentWind = validPlasma.find(p => p.speed !== null && p.speed !== undefined);
+        const currentWind = [...plasma].reverse().find(p => p.speed !== null && p.speed !== undefined);
         if (currentWind) {
           const speed = parseFloat(currentWind.speed);
           if (!isNaN(speed) && speed > 0) {
@@ -81,14 +76,32 @@ async function updateData() {
     console.error("Fehler bei NOAA RTSW Wind:", err.message);
   }
 
-  // 4. NOAA Protonenfluss
+  // 4. NOAA Real-Time Interplanetary Magnetic Field (IMF - Bz Komponente)
+  try {
+    const resMag = await fetch(`https://services.swpc.noaa.gov/json/rtsw/rtsw_mag_1m.json${cacheBuster}`);
+    if (resMag.ok) {
+      const magData = await resMag.json();
+      if (Array.isArray(magData) && magData.length > 0) {
+        const currentMag = [...magData].reverse().find(m => m.bz_gsm !== null && m.bz_gsm !== undefined);
+        if (currentMag) {
+          const bzVal = parseFloat(currentMag.bz_gsm);
+          if (!isNaN(bzVal)) {
+            cachedData.bz = bzVal.toFixed(1);
+          }
+        }
+      }
+    }
+  } catch (err) {
+    console.error("Fehler bei NOAA RTSW Mag (Bz):", err.message);
+  }
+
+  // 5. NOAA Protonenfluss
   try {
     const resProtons = await fetch(`https://services.swpc.noaa.gov/json/goes/primary/integral-protons-6-hour.json${cacheBuster}`);
     if (resProtons.ok) {
       const protons = await resProtons.json();
       if (Array.isArray(protons) && protons.length > 0) {
-        const validProtons = [...protons].reverse();
-        const validProton = validProtons.find(p => p.flux !== null && p.flux !== undefined);
+        const validProton = [...protons].reverse().find(p => p.flux !== null && p.flux !== undefined);
         if (validProton) {
           cachedData.protons = Number(validProton.flux).toFixed(2);
         }
@@ -100,7 +113,7 @@ async function updateData() {
 
   cachedData.updated = new Date().toISOString();
   lastFetchTime = Date.now();
-  console.log("Rohdaten erfolgreich aktualisiert:", cachedData);
+  console.log("Rohdaten erfolgreich optimiert und aktualisiert:", cachedData);
 }
 
 app.get('/solar-data', async (req, res) => {
@@ -113,4 +126,4 @@ app.get('/solar-data', async (req, res) => {
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Läuft auf Port ${PORT}`));
+app.listen(PORT, () => console.log(`Optimierter Server läuft auf Port ${PORT}`));
