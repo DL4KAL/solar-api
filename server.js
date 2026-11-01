@@ -112,6 +112,8 @@ app.get('/solar-data', async (req, res) => {
   }
 });
 
-app.listen(PORT, () => {
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`Solar-API läuft auf Port ${PORT}`);
+});
   console.log(`Solar-API läuft auf Port ${PORT}`);
 });
