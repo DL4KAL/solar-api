@@ -6,24 +6,20 @@ const PORT = process.env.PORT || 8080;
 
 app.use(cors());
 
-// 1. Hilfsfunktion: Robuster Abruf der Ionosphären- & MUF-Daten
+// Hilfsfunktion: Ionosonde abfragen mit direkter Fallback-Garantie
 async function fetchIonosondeData() {
   try {
-    // Abruf über verlässliche Weltraumwetter-API für F2/MUF
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 3500); // 3.5s Timeout
+    const timeout = setTimeout(() => controller.abort(), 3000);
 
     const response = await fetch('https://prop.kc2g.com/api/muf.json', {
       signal: controller.signal,
-      headers: {
-        'User-Agent': 'DL4KAL-SpaceWeather/1.0'
-      }
+      headers: { 'User-Agent': 'DL4KAL-SpaceWeather/1.0' }
     });
     clearTimeout(timeout);
 
     if (response.ok) {
       const data = await response.json();
-      // Suche nach mitteleuropäischen Stationen (Juliusruh / Prag)
       if (data && data.stations) {
         const jr = data.stations['JR055'] || data.stations['PQ052'];
         if (jr && jr.fof2 && jr.mufd) {
@@ -35,7 +31,7 @@ async function fetchIonosondeData() {
           else if (parseFloat(foF2) < 3.5) nvisBand = "160m / 80m";
 
           return {
-            station: jr.name || "Mitteleuropa (Juliusruh)",
+            station: jr.name || "Juliusruh (JR055)",
             foF2: foF2,
             muf3000: muf3000,
             nvisBand: nvisBand,
@@ -45,25 +41,23 @@ async function fetchIonosondeData() {
       }
     }
   } catch (err) {
-    console.error("Ionosonden-API fehlgeschlagen/blocked:", err.message);
+    console.error("Ionosonden-API Ausfall:", err.message);
   }
 
-  // FALLBACK: Dynamisches Modell für Mitteleuropa (basiert auf Sonnenstand & UTC)
+  // Modellierter Fallback für Mitteleuropa
   const nowUtcHour = new Date().getUTCHours();
   const isDay = nowUtcHour >= 6 && nowUtcHour <= 17;
-  const estimatedFoF2 = isDay ? "6.4" : "3.6";
-  const estimatedMuf = isDay ? "19.8" : "11.1";
 
-  return { 
-    station: "Mitteleuropa (Modell/Estimate)", 
-    foF2: estimatedFoF2, 
-    muf3000: estimatedMuf, 
-    nvisBand: isDay ? "40m / 60m" : "80m / 160m", 
+  return {
+    station: "Mitteleuropa (Modell)",
+    foF2: isDay ? "6.4" : "3.6",
+    muf3000: isDay ? "19.8" : "11.1",
+    nvisBand: isDay ? "40m / 60m" : "80m / 160m",
     updated: new Date().toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit', timeZone: 'UTC' }) + ' UTC'
   };
 }
 
-// 2. Solardaten & Geomagnetik (HamQSL XML)
+// Solardaten (HamQSL XML)
 async function fetchSolarData() {
   try {
     const response = await fetch('https://www.hamqsl.com/solarxml.php');
@@ -92,7 +86,6 @@ async function fetchSolarData() {
   }
 }
 
-// Endpoint für das Blogger-Frontend
 app.get('/solar-data', async (req, res) => {
   try {
     const [solar, iono] = await Promise.all([
