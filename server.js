@@ -6,12 +6,22 @@ const PORT = process.env.PORT || 8080;
 
 app.use(cors());
 
-// Hilfsfunktion: Einzelne Ionosonde abfragen und parsen
+// Hilfsfunktion: Einzelne Ionosonde abfragen mit Proper Headers & Timeout
 async function fetchSingleIonosonde(stationCode, stationName) {
-  const url = `https://lgdc.uml.edu/api/getData?charName=foF2,M3000F2&stationName=${stationCode}&from=latest-1h`;
+  const url = `https://lgdc.uml.edu/api/getData?charName=foF2,M3000F2&stationName=${stationCode}&from=latest-2h`;
   
   try {
-    const response = await fetch(url);
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 4000); // 4 Sek. Timeout
+
+    const response = await fetch(url, {
+      signal: controller.signal,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) DL4KAL-SpaceWeather/1.0'
+      }
+    });
+    clearTimeout(timeout);
+
     if (!response.ok) return null;
     const text = await response.text();
     
@@ -21,10 +31,14 @@ async function fetchSingleIonosonde(stationCode, stationName) {
 
     // Neuesten Eintrag auslesen
     const lastLine = lines[lines.length - 1].trim().split(/\s+/);
+    
+    // Prüfen ob genügend Spalten vorhanden sind (Datum, Zeit, foF2, M3000F2)
+    if (lastLine.length < 4) return null;
+
     const foF2 = parseFloat(lastLine[lastLine.length - 2]);
     const m3000 = parseFloat(lastLine[lastLine.length - 1]);
 
-    if (isNaN(foF2) || isNaN(m3000)) return null;
+    if (isNaN(foF2) || isNaN(m3000) || foF2 <= 0) return null;
 
     const muf3000 = parseFloat((foF2 * m3000).toFixed(1));
 
@@ -45,22 +59,26 @@ async function fetchSingleIonosonde(stationCode, stationName) {
   }
 }
 
-// 1. Hilfsfunktion mit Fallback: Juliusruh (JR055) ➔ Průhonice/Prag (PQ052)
+// Ionosonden-Abruf mit primär Juliusruh (JR055) und Fallback Průhonice (PQ052)
 async function fetchIonosondeData() {
-  // Versuch 1: Juliusruh
   let ionoData = await fetchSingleIonosonde('JR055', 'Juliusruh (JR055)');
   if (ionoData) return ionoData;
 
-  // Versuch 2: Průhonice / Prag (Tschechien) als Fallback
   console.log('Juliusruh offline/ohne Daten. Wechsele auf Průhonice (PQ052)...');
   ionoData = await fetchSingleIonosonde('PQ052', 'Průhonice (PQ052)');
   if (ionoData) return ionoData;
 
-  // Beide offline
-  return { station: "Ionosonden Offline", foF2: "--", muf3000: "--", nvisBand: "--", updated: "--" };
+  // Wenn beide GIRO-Sonden fehlschlagen
+  return { 
+    station: "Ionosonden Offline", 
+    foF2: "--", 
+    muf3000: "--", 
+    nvisBand: "--", 
+    updated: "Keine Daten" 
+  };
 }
 
-// 2. Hilfsfunktion: Solardaten & Geomagnetik (HamQSL XML)
+// Solardaten (HamQSL XML)
 async function fetchSolarData() {
   try {
     const response = await fetch('https://www.hamqsl.com/solarxml.php');
@@ -89,7 +107,6 @@ async function fetchSolarData() {
   }
 }
 
-// Haupt-Endpoint /solar-data (passend zur URL im Blogger-Frontend)
 app.get('/solar-data', async (req, res) => {
   try {
     const [solar, iono] = await Promise.all([
@@ -117,5 +134,5 @@ app.get('/solar-data', async (req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`Solar-API läuft erfolgreich auf Port ${PORT}`);
+  console.log(`Solar-API läuft auf Port ${PORT}`);
 });
