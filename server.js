@@ -6,82 +6,64 @@ const PORT = process.env.PORT || 8080;
 
 app.use(cors());
 
-// Hilfsfunktion: Einzelne Ionosonde mit striktem Timeout & User-Agent abfragen
-async function fetchSingleIonosonde(stationCode, stationName) {
-  const url = `https://lgdc.uml.edu/api/getData?charName=foF2,M3000F2&stationName=${stationCode}&from=latest-2h`;
-  
+// 1. Hilfsfunktion: Robuster Abruf der Ionosphären- & MUF-Daten
+async function fetchIonosondeData() {
   try {
+    // Abruf über verlässliche Weltraumwetter-API für F2/MUF
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 3000); // Max 3s Warten
+    const timeout = setTimeout(() => controller.abort(), 3500); // 3.5s Timeout
 
-    const response = await fetch(url, {
+    const response = await fetch('https://prop.kc2g.com/api/muf.json', {
       signal: controller.signal,
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) DL4KAL-SpaceWeather/1.0',
-        'Accept': 'text/plain, */*'
+        'User-Agent': 'DL4KAL-SpaceWeather/1.0'
       }
     });
     clearTimeout(timeout);
 
-    if (!response.ok) return null;
-    const text = await response.text();
-    
-    // Textzeilen filtern
-    const lines = text.split('\n').filter(l => !l.startsWith('#') && l.trim().length > 0);
-    if (lines.length === 0) return null;
+    if (response.ok) {
+      const data = await response.json();
+      // Suche nach mitteleuropäischen Stationen (Juliusruh / Prag)
+      if (data && data.stations) {
+        const jr = data.stations['JR055'] || data.stations['PQ052'];
+        if (jr && jr.fof2 && jr.mufd) {
+          const foF2 = parseFloat(jr.fof2).toFixed(1);
+          const muf3000 = parseFloat(jr.mufd).toFixed(1);
 
-    // Neuesten Tabelleneintrag extrahieren
-    const lastLine = lines[lines.length - 1].trim().split(/\s+/);
-    if (lastLine.length < 4) return null;
+          let nvisBand = "80m / 60m";
+          if (parseFloat(foF2) > 7.0) nvisBand = "40m";
+          else if (parseFloat(foF2) < 3.5) nvisBand = "160m / 80m";
 
-    const foF2 = parseFloat(lastLine[lastLine.length - 2]);
-    const m3000 = parseFloat(lastLine[lastLine.length - 1]);
-
-    if (isNaN(foF2) || isNaN(m3000) || foF2 <= 0) return null;
-
-    const muf3000 = parseFloat((foF2 * m3000).toFixed(1));
-
-    let nvisBand = "80m / 60m";
-    if (foF2 > 7.0) nvisBand = "40m";
-    else if (foF2 < 3.5) nvisBand = "160m / 80m";
-
-    return {
-      station: stationName,
-      foF2: foF2.toFixed(1),
-      muf3000: muf3000.toFixed(1),
-      nvisBand: nvisBand,
-      updated: new Date().toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit', timeZone: 'UTC' }) + ' UTC'
-    };
+          return {
+            station: jr.name || "Mitteleuropa (Juliusruh)",
+            foF2: foF2,
+            muf3000: muf3000,
+            nvisBand: nvisBand,
+            updated: new Date().toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit', timeZone: 'UTC' }) + ' UTC'
+          };
+        }
+      }
+    }
   } catch (err) {
-    console.error(`Ionosonde ${stationCode} nicht erreichbar:`, err.message);
-    return null;
+    console.error("Ionosonden-API fehlgeschlagen/blocked:", err.message);
   }
-}
 
-// Haupt-Abruf mit Kaskade: JR055 ➔ PQ052 ➔ Tageszeit-Modell als Schutz
-async function fetchIonosondeData() {
-  // 1. Versuch: Juliusruh
-  let ionoData = await fetchSingleIonosonde('JR055', 'Juliusruh (JR055)');
-  if (ionoData) return ionoData;
-
-  // 2. Versuch: Prag / Průhonice
-  ionoData = await fetchSingleIonosonde('PQ052', 'Průhonice (PQ052)');
-  if (ionoData) return ionoData;
-
-  // 3. Fallback: Bei Blockade der GIRO-API ein Tageszeitmodell für Mitteleuropa
+  // FALLBACK: Dynamisches Modell für Mitteleuropa (basiert auf Sonnenstand & UTC)
   const nowUtcHour = new Date().getUTCHours();
   const isDay = nowUtcHour >= 6 && nowUtcHour <= 17;
-  
+  const estimatedFoF2 = isDay ? "6.4" : "3.6";
+  const estimatedMuf = isDay ? "19.8" : "11.1";
+
   return { 
     station: "Mitteleuropa (Modell/Estimate)", 
-    foF2: isDay ? "6.4" : "3.6", 
-    muf3000: isDay ? "19.8" : "11.1", 
+    foF2: estimatedFoF2, 
+    muf3000: estimatedMuf, 
     nvisBand: isDay ? "40m / 60m" : "80m / 160m", 
     updated: new Date().toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit', timeZone: 'UTC' }) + ' UTC'
   };
 }
 
-// Solardaten (HamQSL XML)
+// 2. Solardaten & Geomagnetik (HamQSL XML)
 async function fetchSolarData() {
   try {
     const response = await fetch('https://www.hamqsl.com/solarxml.php');
@@ -110,7 +92,7 @@ async function fetchSolarData() {
   }
 }
 
-// Endpoint für das Blog-Frontend
+// Endpoint für das Blogger-Frontend
 app.get('/solar-data', async (req, res) => {
   try {
     const [solar, iono] = await Promise.all([
