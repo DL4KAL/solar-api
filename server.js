@@ -6,18 +6,19 @@ const PORT = process.env.PORT || 8080;
 
 app.use(cors());
 
-// 1. Hilfsfunktion: Einzelne Ionosonde abfragen mit Header & Timeout
+// Hilfsfunktion: Einzelne Ionosonde mit striktem Timeout & User-Agent abfragen
 async function fetchSingleIonosonde(stationCode, stationName) {
   const url = `https://lgdc.uml.edu/api/getData?charName=foF2,M3000F2&stationName=${stationCode}&from=latest-2h`;
   
   try {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 4000); // 4 Sekunden Timeout
+    const timeout = setTimeout(() => controller.abort(), 3000); // Max 3s Warten
 
     const response = await fetch(url, {
       signal: controller.signal,
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) DL4KAL-SpaceWeather/1.0'
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) DL4KAL-SpaceWeather/1.0',
+        'Accept': 'text/plain, */*'
       }
     });
     clearTimeout(timeout);
@@ -25,11 +26,11 @@ async function fetchSingleIonosonde(stationCode, stationName) {
     if (!response.ok) return null;
     const text = await response.text();
     
-    // Kommentare und leere Zeilen filtern
+    // Textzeilen filtern
     const lines = text.split('\n').filter(l => !l.startsWith('#') && l.trim().length > 0);
     if (lines.length === 0) return null;
 
-    // Neueste Messung parsen
+    // Neuesten Tabelleneintrag extrahieren
     const lastLine = lines[lines.length - 1].trim().split(/\s+/);
     if (lastLine.length < 4) return null;
 
@@ -52,38 +53,35 @@ async function fetchSingleIonosonde(stationCode, stationName) {
       updated: new Date().toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit', timeZone: 'UTC' }) + ' UTC'
     };
   } catch (err) {
-    console.error(`Fehler bei Ionosonde ${stationCode}:`, err.message);
+    console.error(`Ionosonde ${stationCode} nicht erreichbar:`, err.message);
     return null;
   }
 }
 
-// 2. Ionosonden-Abruf mit Kaskade: Juliusruh ➔ Prag ➔ Modell-Fallback
+// Haupt-Abruf mit Kaskade: JR055 ➔ PQ052 ➔ Tageszeit-Modell als Schutz
 async function fetchIonosondeData() {
-  // Versuch 1: Juliusruh
+  // 1. Versuch: Juliusruh
   let ionoData = await fetchSingleIonosonde('JR055', 'Juliusruh (JR055)');
   if (ionoData) return ionoData;
 
-  // Versuch 2: Průhonice / Prag
-  console.log('Juliusruh offline/ohne Daten. Wechsele auf Průhonice (PQ052)...');
+  // 2. Versuch: Prag / Průhonice
   ionoData = await fetchSingleIonosonde('PQ052', 'Průhonice (PQ052)');
   if (ionoData) return ionoData;
 
-  // Versuch 3: Modellierte Annäherung für Mitteleuropa bei GIRO-Blockade
+  // 3. Fallback: Bei Blockade der GIRO-API ein Tageszeitmodell für Mitteleuropa
   const nowUtcHour = new Date().getUTCHours();
   const isDay = nowUtcHour >= 6 && nowUtcHour <= 17;
-  const estimatedFoF2 = isDay ? "6.2" : "3.4";
-  const estimatedMuf = isDay ? "19.2" : "10.5";
-
+  
   return { 
     station: "Mitteleuropa (Modell/Estimate)", 
-    foF2: estimatedFoF2, 
-    muf3000: estimatedMuf, 
+    foF2: isDay ? "6.4" : "3.6", 
+    muf3000: isDay ? "19.8" : "11.1", 
     nvisBand: isDay ? "40m / 60m" : "80m / 160m", 
     updated: new Date().toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit', timeZone: 'UTC' }) + ' UTC'
   };
 }
 
-// 3. Solardaten & Geomagnetik (HamQSL XML)
+// Solardaten (HamQSL XML)
 async function fetchSolarData() {
   try {
     const response = await fetch('https://www.hamqsl.com/solarxml.php');
@@ -112,7 +110,7 @@ async function fetchSolarData() {
   }
 }
 
-// Haupt-Endpoint für das Blogger-Dashboard
+// Endpoint für das Blog-Frontend
 app.get('/solar-data', async (req, res) => {
   try {
     const [solar, iono] = await Promise.all([
@@ -135,10 +133,10 @@ app.get('/solar-data', async (req, res) => {
     });
   } catch (error) {
     console.error('API Error:', error);
-    res.status(500).json({ error: 'Fehler beim Verarbeiten der Weltraumwetter-Daten' });
+    res.status(500).json({ error: 'Fehler beim Verarbeiten der Daten' });
   }
 });
 
 app.listen(PORT, () => {
-  console.log(`Solar-API läuft erfolgreich auf Port ${PORT}`);
+  console.log(`Solar-API läuft auf Port ${PORT}`);
 });
