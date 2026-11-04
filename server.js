@@ -112,7 +112,7 @@ app.get('/solar-data', async (req, res) => {
   }
 });
 
-// Server einmalig am Ende starten (mit Cloud Run Port & 0.0.0.0)
+// Server starten mit Cloud Run Port & 0.0.0.0
 const port = process.env.PORT || 8080;
 app.listen(port, '0.0.0.0', () => {
   console.log(`Solar-API läuft auf Port ${port}`);
