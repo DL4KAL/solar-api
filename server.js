@@ -2,11 +2,8 @@ import express from 'express';
 import cors from 'cors';
 
 const app = express();
-const port = process.env.PORT || 8080;
-app.listen(port, '0.0.0.0', () => {
-  console.log(`Server läuft auf Port ${port}`);
-});
 
+// CORS für alle Domains / deinen Blog aktivieren
 app.use(cors());
 
 // Hilfsfunktion: Ionosonde abfragen mit direkter Fallback-Garantie
@@ -115,7 +112,8 @@ app.get('/solar-data', async (req, res) => {
   }
 });
 
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Solar-API läuft auf Port ${PORT}`);
+// Server einmalig am Ende starten (mit Cloud Run Port & 0.0.0.0)
+const port = process.env.PORT || 8080;
+app.listen(port, '0.0.0.0', () => {
+  console.log(`Solar-API läuft auf Port ${port}`);
 });
-  
